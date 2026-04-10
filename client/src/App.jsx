@@ -6,19 +6,27 @@ const subtitle = '\u092e\u093f\u0925\u094d\u092f\u093e \u2014 AI Fake News Analy
 const defaultReason =
   'The report does not yet contain enough corroborated signals to issue a confident authenticity call.'
 
-const resolveVerdictFromConfidence = (confidence) => {
-  if (confidence <= 40) {
+const resolveVerdictFromScore = (score) => {
+  if (score <= 20) {
     return 'FAKE'
   }
 
-  if (confidence >= 66) {
-    return 'REAL'
+  if (score <= 40) {
+    return 'MISLEADING'
   }
 
-  return 'UNCERTAIN'
+  if (score <= 60) {
+    return 'UNCERTAIN'
+  }
+
+  if (score <= 80) {
+    return 'LIKELY TRUE'
+  }
+
+  return 'VERIFIED'
 }
 
-const normalizeConfidence = (value) => {
+const normalizeScore = (value) => {
   const numericValue = Number(value)
 
   if (!Number.isFinite(numericValue)) {
@@ -31,25 +39,11 @@ const normalizeConfidence = (value) => {
   return Math.max(0, Math.min(100, scaledValue))
 }
 
-const mapToCredibilityScore = (verdict, confidence) => {
-  const normalizedConfidence = Math.max(0, Math.min(100, Number(confidence) || 0))
-
-  if (verdict === 'FAKE') {
-    return Math.max(0, Math.min(40, Math.round(100 - normalizedConfidence)))
-  }
-
-  if (verdict === 'UNCERTAIN') {
-    return Math.max(41, Math.min(65, Math.round(normalizedConfidence)))
-  }
-
-  return Math.max(66, Math.min(100, Math.round(normalizedConfidence)))
-}
-
 const parseAnalysisPayload = (payload) => {
   if (!payload) {
     return {
       verdict: 'UNCERTAIN',
-      confidence: 52,
+      credibilityScore: 50,
       reason: defaultReason,
     }
   }
@@ -76,26 +70,10 @@ const parseAnalysisPayload = (payload) => {
   }
 
   const source = structured || payload
-  const explicitVerdict = String(
-    source.verdict ||
-      source.label ||
-      (/\bfake\b/i.test(rawText)
-        ? 'FAKE'
-        : /\breal\b|\btrue\b|\bauthentic\b/i.test(rawText)
-          ? 'REAL'
-          : 'UNCERTAIN'),
-  ).toUpperCase()
-
-  const normalizedConfidence = normalizeConfidence(
-    source.confidence ?? source.confidenceScore ?? source.score,
+  const explicitVerdict = String(source.verdict || source.label || '').toUpperCase()
+  let credibilityScore = normalizeScore(
+    source.credibilityScore ?? source.confidence ?? source.confidenceScore ?? source.score,
   )
-  let confidence = normalizedConfidence !== null
-    ? normalizedConfidence
-    : explicitVerdict.includes('FAKE')
-      ? 82
-      : explicitVerdict.includes('REAL') || explicitVerdict.includes('TRUE')
-        ? 74
-        : 51
 
   const reason =
     source.reasoning ||
@@ -106,34 +84,55 @@ const parseAnalysisPayload = (payload) => {
 
   const lowerReason = String(reason).toLowerCase()
 
-  if (normalizedConfidence === null) {
+  if (credibilityScore === null) {
     if (
       /\bfalse\b|\bfabricated\b|\bhoax\b|\bmisleading\b|\bunsupported\b|\bno supporting evidence\b|\black of corroborating\b/.test(
         lowerReason,
       )
     ) {
-      confidence = 20
+      credibilityScore = 12
+    } else if (
+      /\bdistorted\b|\bexaggerated\b|\bout of context\b|\bmissing context\b/.test(lowerReason)
+    ) {
+      credibilityScore = 32
+    } else if (
+      /\bunverifiable\b|\buncertain\b|\bcannot confirm\b|\bnot enough context\b/.test(lowerReason)
+    ) {
+      credibilityScore = 50
+    } else if (
+      /\bmostly true\b|\blikely true\b|\bappears credible\b|\bconsistent with known facts\b/.test(
+        lowerReason,
+      )
+    ) {
+      credibilityScore = 72
     } else if (
       /\bverified\b|\bconfirmed\b|\bcorroborated\b|\bauthentic\b|\bcredible reporting\b/.test(
         lowerReason,
       )
     ) {
-      confidence = 82
+      credibilityScore = 92
+    } else {
+      credibilityScore = 50
     }
   }
 
   const verdict =
     explicitVerdict.includes('FAKE')
       ? 'FAKE'
-      : explicitVerdict.includes('REAL') || explicitVerdict.includes('TRUE')
-        ? 'REAL'
-        : resolveVerdictFromConfidence(confidence)
-
-  const credibilityScore = mapToCredibilityScore(verdict, confidence)
+      : explicitVerdict.includes('MISLEADING')
+        ? 'MISLEADING'
+        : explicitVerdict.includes('UNCERTAIN')
+          ? 'UNCERTAIN'
+          : explicitVerdict.includes('LIKELY TRUE')
+            ? 'LIKELY TRUE'
+            : explicitVerdict.includes('VERIFIED') ||
+                explicitVerdict.includes('REAL') ||
+                explicitVerdict.includes('TRUE')
+              ? 'VERIFIED'
+              : resolveVerdictFromScore(credibilityScore)
 
   return {
     verdict,
-    confidence,
     credibilityScore,
     reason: String(reason).trim(),
   }
@@ -286,7 +285,7 @@ function App() {
       return 'uncertain'
     }
 
-    return result.verdict.toLowerCase()
+    return result.verdict.toLowerCase().replace(/\s+/g, '-')
   }, [result])
 
   const meterPalette = useMemo(() => {
@@ -299,10 +298,24 @@ function App() {
       }
     }
 
+    if (verdict === 'MISLEADING') {
+      return {
+        start: '#f97316',
+        end: '#f97316',
+      }
+    }
+
     if (verdict === 'UNCERTAIN') {
       return {
         start: '#f59e0b',
         end: '#f59e0b',
+      }
+    }
+
+    if (verdict === 'LIKELY TRUE') {
+      return {
+        start: '#84cc16',
+        end: '#84cc16',
       }
     }
 
@@ -417,16 +430,24 @@ function App() {
             </div>
             <div className="scale-zones">
               <div className="scale-zone scale-zone--fake">
-                <span className="scale-range">0-40</span>
+                <span className="scale-range">0-20</span>
                 <span className="scale-name">Fake</span>
               </div>
+              <div className="scale-zone scale-zone--misleading">
+                <span className="scale-range">21-40</span>
+                <span className="scale-name">Misleading</span>
+              </div>
               <div className="scale-zone scale-zone--uncertain">
-                <span className="scale-range">41-65</span>
+                <span className="scale-range">41-60</span>
                 <span className="scale-name">Uncertain</span>
               </div>
-              <div className="scale-zone scale-zone--real">
-                <span className="scale-range">66-100</span>
-                <span className="scale-name">Real</span>
+              <div className="scale-zone scale-zone--likely-true">
+                <span className="scale-range">61-80</span>
+                <span className="scale-name">Likely True</span>
+              </div>
+              <div className="scale-zone scale-zone--verified">
+                <span className="scale-range">81-100</span>
+                <span className="scale-name">Verified</span>
               </div>
             </div>
           </section>

@@ -11,6 +11,26 @@ const app = express();
 const PORT = 5000;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
+const getVerdictFromScore = (score) => {
+  if (score <= 20) {
+    return "FAKE";
+  }
+
+  if (score <= 40) {
+    return "MISLEADING";
+  }
+
+  if (score <= 60) {
+    return "UNCERTAIN";
+  }
+
+  if (score <= 80) {
+    return "LIKELY TRUE";
+  }
+
+  return "VERIFIED";
+};
+
 app.use(cors());
 app.use(express.json());
 
@@ -36,19 +56,34 @@ app.post("/analyze", async (req, res) => {
   }
 
   const userText = articleText || headline || "N/A";
-  const content = `You are a fake news detector for Indian audiences. Analyze this headline carefully.
+  const content = `You are a fake news detector for Indian audiences. Analyze this claim carefully and return a credibility score from 0 to 100.
 
-VERDICT must be:
-- FAKE: if the claim is demonstrably false, fabricated, or has no credible basis
-- REAL: if the claim is verifiably true or highly credible based on known facts
-- UNCERTAIN: if the claim is subjective, opinion-based, unverifiable, partially true, or lacks enough context to confirm or deny
+Use these exact verdict bands:
+- 0-20: FAKE
+- 21-40: MISLEADING
+- 41-60: UNCERTAIN
+- 61-80: LIKELY TRUE
+- 81-100: VERIFIED
 
-Confidence (0-100): how confident you are in your verdict.
+Scoring guidance:
+- FAKE: demonstrably false, fabricated, or has no credible basis
+- MISLEADING: contains some truth but is distorted, exaggerated, missing key context, or likely to mislead
+- UNCERTAIN: subjective, opinion-based, unverifiable, partially true, or lacks enough context to confirm or deny
+- LIKELY TRUE: mostly credible and consistent with known facts, but still not authoritative enough to mark as fully verified
+- VERIFIED: strongly supported by established facts or highly credible, authoritative sources
+
+For MISLEADING, UNCERTAIN, and LIKELY TRUE responses, the reason must be 4-5 clear sentences and must include:
+1. What part of the claim is true, if any
+2. What part is false, distorted, or unverifiable
+3. Why it is rated MISLEADING, UNCERTAIN, or LIKELY TRUE instead of a definitive verdict
+4. What the user should do next, such as cross-checking with ANI, PTI, or official government sources
+
+For FAKE and VERIFIED, a brief explanation is fine.
 
 Respond ONLY in valid JSON, no markdown, no explanation outside JSON:
-{"verdict": "FAKE" or "REAL" or "UNCERTAIN", "confidence": number, "reason": "one sentence explanation"}
+{"verdict":"FAKE or MISLEADING or UNCERTAIN or LIKELY TRUE or VERIFIED","credibilityScore":number,"reason":"explanation"}
 
-Headline to analyze: ${userText}`;
+Claim to analyze: ${userText}`;
 
   try {
     const response = await fetch(
@@ -87,7 +122,22 @@ Headline to analyze: ${userText}`;
       data.candidates?.[0]?.content?.parts?.map((part) => part.text).join("\n") ||
       "No analysis returned by Gemini.";
 
-    return res.json({ analysis });
+    try {
+      const parsed = JSON.parse(analysis);
+      const rawScore = Number(parsed.credibilityScore ?? parsed.score);
+      const credibilityScore = Number.isFinite(rawScore)
+        ? Math.max(0, Math.min(100, rawScore))
+        : 50;
+      const verdict = getVerdictFromScore(credibilityScore);
+
+      return res.json({
+        verdict,
+        credibilityScore,
+        reason: parsed.reason || "No explanation returned by Gemini."
+      });
+    } catch (_parseError) {
+      return res.json({ analysis });
+    }
   } catch (error) {
     console.error("[/analyze] Gemini API error:", error);
 
