@@ -5,6 +5,7 @@ const title = 'MITHYA'
 const subtitle = '\u092e\u093f\u0925\u094d\u092f\u093e \u2014 AI Fake News Analyzer'
 const defaultReason =
   'The report does not yet contain enough corroborated signals to issue a confident authenticity call.'
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000'
 
 const resolveVerdictFromScore = (score) => {
   if (score <= 20) {
@@ -346,7 +347,7 @@ function App() {
     setTypedReason('')
 
     try {
-      const response = await fetch('https://mithya-bwrv.onrender.com/analyze', {
+      const response = await fetch(`${API_URL}/analyze`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

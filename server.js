@@ -94,6 +94,12 @@ Claim to analyze: ${userText}`;
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
+          // Google Search Grounding gives Gemini access to current web/news results.
+          tools: [
+            {
+              google_search: {}
+            }
+          ],
           contents: [
             {
               parts: [
